@@ -1,0 +1,254 @@
+/* ── Reset for transparent Tauri window ─────────────────────────────────── */
+html, body {
+  margin: 0;
+  padding: 0;
+  background: transparent !important;
+  overflow: hidden;
+  font: 14px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+    "Microsoft YaHei", sans-serif;
+  -webkit-user-select: none;
+  user-select: none;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+
+/* ── Container wrapper for button / panel ──────────────────────────────── */
+.ws-wrapper {
+  padding: 8px;
+  display: inline-block;
+}
+
+/* ── Floating button ───────────────────────────────────────────────────── */
+.ws-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: #4f6bed;
+  color: #fff;
+  font: 500 13px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+    "Microsoft YaHei", sans-serif;
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgba(30,40,90,.32);
+  transition: transform 0.1s ease, background 0.15s ease;
+  user-select: none;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+.ws-btn:hover {
+  background: #4159d8;
+  transform: translateY(-1px);
+}
+.ws-btn:active {
+  transform: translateY(0);
+}
+.ws-btn svg { width: 14px; height: 14px; }
+
+/* ── Result panel ──────────────────────────────────────────────────────── */
+.ws-panel {
+  width: calc(100vw - 16px);
+  height: calc(100vh - 16px);
+  margin: 8px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: #ffffff;
+  color: #1f2937;
+  border-radius: 14px;
+  box-shadow: 0 14px 40px rgba(15,23,42,.32), 0 2px 8px rgba(15,23,42,.12);
+  border: 1px solid rgba(15,23,42,.1);
+}
+.ws-panel-head {
+  display: flex;
+  flex-direction: column;
+  padding: 10px 12px 8px;
+  border-bottom: 1px solid #eef0f4;
+  cursor: move;
+  touch-action: none;
+}
+.ws-head-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+
+/* ── Badge ─────────────────────────────────────────────────────────────── */
+.ws-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  color: #fff;
+  flex-shrink: 0;
+}
+.ws-badge.word   { background: #4f6bed; }
+.ws-badge.phrase  { background: #0e9f6e; }
+.ws-badge.idiom   { background: #d97706; }
+.ws-badge.other   { background: #6b7280; }
+
+/* ── Query / meta ──────────────────────────────────────────────────────── */
+.ws-query { font-weight: 700; font-size: 15px; flex: 1; min-width: 0; overflow-wrap: anywhere; user-select: text; }
+.ws-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 12px;
+  margin-top: 4px;
+  font-size: 13px;
+  color: #6b7280;
+}
+.ws-meta .phonetic { font-weight: 400; color: #6b7280; font-size: 13px; }
+.ws-meta .pos      { font-weight: 400; color: #4f6bed; font-size: 12px; }
+.ws-meta:empty     { display: none; }
+
+/* ── Pronunciation buttons ─────────────────────────────────────────────── */
+.ws-pron { display: inline-flex; gap: 4px; flex-shrink: 0; margin-left: 2px; }
+.ws-pron-btn {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid #d1d5db;
+  background: #fff;
+  color: #4f6bed;
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.ws-pron-btn:hover { background: #eef2ff; border-color: #a5b4fc; }
+.ws-pron-btn.playing { background: #4f6bed; color: #fff; border-color: #4f6bed; }
+
+/* ── Close button ──────────────────────────────────────────────────────── */
+.ws-close {
+  border: 0;
+  background: transparent;
+  color: #9ca3af;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 6px;
+}
+.ws-close:hover { background: #f3f4f6; color: #374151; }
+
+/* ── Body ──────────────────────────────────────────────────────────────── */
+.ws-body { padding: 12px; overflow-y: auto; overscroll-behavior: contain; flex: 1; user-select: text; }
+.ws-section-title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .05em;
+  color: #9ca3af;
+  text-transform: uppercase;
+  margin: 12px 0 4px;
+}
+.ws-section-title:first-child { margin-top: 0; }
+
+/* ── Content blocks ────────────────────────────────────────────────────── */
+.ws-meaning {
+  background: #f0f4ff;
+  border: 1px solid #dbe4ff;
+  border-radius: 10px;
+  padding: 10px 12px;
+  color: #1e293b;
+  font-size: 14.5px;
+}
+.ws-meaning-en { color: #475569; margin-top: 6px; font-size: 13px; }
+.ws-quick-bar {
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  color: #92400e;
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 12.5px;
+  margin-bottom: 10px;
+}
+.ws-phrase {
+  background: #ecfdf5;
+  border: 1px solid #a7f3d0;
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin-top: 10px;
+}
+.ws-phrase .p { font-weight: 700; color: #065f46; }
+.ws-phrase .e { color: #374151; margin-top: 3px; font-size: 13.5px; }
+.ws-list { margin: 0; padding-left: 18px; color: #374151; }
+.ws-list li { margin: 3px 0; }
+.ws-example { margin: 8px 0; padding: 8px 10px; background: #f9fafb; border-radius: 8px; }
+.ws-example .en { font-weight: 600; color: #111827; }
+.ws-example .zh { color: #6b7280; font-size: 13px; }
+.ws-note { color: #6b7280; font-size: 12.5px; font-style: italic; margin-top: 10px; }
+
+/* ── Footer ────────────────────────────────────────────────────────────── */
+.ws-foot { display: flex; gap: 8px; padding: 8px 12px 10px; border-top: 1px solid #eef0f4; }
+.ws-btn-sm {
+  border: 1px solid #d1d5db;
+  background: #fff;
+  color: #374151;
+  border-radius: 8px;
+  padding: 5px 10px;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.ws-btn-sm:hover { background: #f3f4f6; }
+
+/* ── Loading / error ───────────────────────────────────────────────────── */
+.ws-loading { display: flex; align-items: center; gap: 10px; color: #6b7280; padding: 8px 2px; }
+.ws-spinner {
+  width: 18px;
+  height: 18px;
+  border: 2px solid #dbe4ff;
+  border-top-color: #4f6bed;
+  border-radius: 50%;
+  animation: ws-spin .8s linear infinite;
+}
+@keyframes ws-spin { to { transform: rotate(360deg); } }
+.ws-error {
+  color: #b91c1c;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: 10px;
+  padding: 10px 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.ws-link-btn {
+  margin-top: 10px;
+  display: inline-block;
+  border: 0;
+  background: #4f6bed;
+  color: #fff;
+  border-radius: 8px;
+  padding: 6px 14px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.ws-raw { color: #6b7280; font-size: 12px; margin-top: 8px; word-break: break-word; }
+details.ws-details { margin-top: 8px; }
+details.ws-details summary { cursor: pointer; color: #6b7280; font-size: 12px; }
+
+/* ── Dark mode ─────────────────────────────────────────────────────────── */
+@media (prefers-color-scheme: dark) {
+  .ws-panel { background: #111827; color: #e5e7eb; border-color: rgba(255,255,255,.1); }
+  .ws-panel-head, .ws-foot { border-color: #1f2937; }
+  .ws-close { color: #6b7280; }
+  .ws-close:hover { background: #1f2937; color: #e5e7eb; }
+  .ws-pron-btn { background: #1f2937; border-color: #374151; color: #a5b4fc; }
+  .ws-pron-btn:hover { background: #374151; border-color: #6366f1; }
+  .ws-pron-btn.playing { background: #4f6bed; color: #fff; border-color: #4f6bed; }
+  .ws-meaning { background: #172554; border-color: #1e3a8a; color: #dbeafe; }
+  .ws-meaning-en { color: #93c5fd; }
+  .ws-meta { color: #9ca3af; }
+  .ws-meta .pos { color: #a5b4fc; }
+  .ws-quick-bar { background: #422006; border-color: #78350f; color: #fde68a; }
+  .ws-phrase { background: #064e3b; border-color: #065f46; }
+  .ws-phrase .p { color: #a7f3d0; }
+  .ws-phrase .e { color: #d1fae5; }
+  .ws-list { color: #d1d5db; }
+  .ws-example { background: #1f2937; }
+  .ws-example .en { color: #f9fafb; }
+  .ws-example .zh { color: #9ca3af; }
+  .ws-note { color: #9ca3af; }
+  .ws-btn-sm { background: #1f2937; border-color: #374151; color: #e5e7eb; }
+  .ws-btn-sm:hover { background: #374151; }
+  .ws-error { background: #450a0a; border-color: #7f1d1d; color: #fecaca; }
+  .ws-section-title { color: #6b7280; }
+}

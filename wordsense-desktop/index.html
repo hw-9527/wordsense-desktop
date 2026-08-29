@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="stylesheet" href="/src/panel.css" />
+  <title>WordSense</title>
+</head>
+<body>
+  <!-- Floating button wrapper (shown on text selection) -->
+  <div id="ws-btn-wrap" class="ws-wrapper" hidden>
+    <div id="ws-btn" class="ws-btn">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round">
+        <circle cx="10.5" cy="10.5" r="6.2"/>
+        <line x1="15.1" y1="15.1" x2="20.5" y2="20.5"/>
+      </svg>
+      <span>词境</span>
+    </div>
+  </div>
+
+  <!-- Result panel (shown after AI lookup) -->
+  <div id="ws-panel" class="ws-panel" hidden>
+    <div class="ws-panel-head">
+      <div class="ws-head-row">
+        <span class="ws-badge word"></span>
+        <span class="ws-query"></span>
+        <span class="ws-pron">
+          <button class="ws-pron-btn ws-pron-browser" type="button" title="浏览器合成发音">🔊</button>
+          <button class="ws-pron-btn ws-pron-youdao" type="button" title="有道词典真人发音">有</button>
+        </span>
+        <button class="ws-close" type="button" title="关闭">×</button>
+      </div>
+      <div class="ws-meta"></div>
+    </div>
+    <div class="ws-body"></div>
+    <div class="ws-foot">
+      <button class="ws-btn-sm ws-speak" type="button">🔊 朗读</button>
+      <button class="ws-btn-sm ws-copy" type="button">📋 复制</button>
+    </div>
+  </div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>

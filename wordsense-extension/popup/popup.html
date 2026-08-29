@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <h1>词境 WordSense</h1>
+    <p class="sub">在网页中结合语境理解单词、固定搭配与习语</p>
+
+    <label>API 地址
+      <input id="baseUrl" type="url" placeholder="https://api.openai.com/v1" spellcheck="false" />
+    </label>
+
+    <label>API Key
+      <span class="row">
+        <input id="apiKey" type="password" placeholder="sk-..." spellcheck="false" autocomplete="off" />
+        <button id="toggleKey" type="button">显示</button>
+      </span>
+    </label>
+
+    <label>模型
+      <input id="model" type="text" placeholder="gpt-4.1-nano" spellcheck="false" />
+    </label>
+
+    <span class="row2">
+      <label>温度
+        <input id="temperature" type="number" min="0" max="1" step="0.1" />
+      </label>
+      <label>最大输出
+        <input id="maxTokens" type="number" min="100" max="4000" step="100" />
+      </label>
+    </span>
+
+    <label class="check">
+      <input id="autoExpand" type="checkbox" />
+      查单词时自动识别所在固定搭配 / 习语
+    </label>
+
+    <label class="check">
+      <input id="disableThinking" type="checkbox" />
+      默认关闭 AI 思考模式（查词更快；若服务商不支持该参数报错，取消勾选）
+    </label>
+
+    <div class="actions">
+      <button id="save" class="primary" type="button">保存设置</button>
+      <button id="test" type="button">测试连接</button>
+    </div>
+    <p id="status"></p>
+    <p class="hint">Key 只保存在本机浏览器中，不会上传到其他服务器。</p>
+
+    <script src="popup.js"></script>
+  </body>
+</html>

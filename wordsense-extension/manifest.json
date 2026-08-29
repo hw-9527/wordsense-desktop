@@ -1,0 +1,48 @@
+{
+  "manifest_version": 3,
+  "name": "词境 WordSense · 语境词典",
+  "version": "1.2.3",
+  "description": "在网页上选中单词、固定搭配或习语，结合上下文理解其确切含义。",
+  "minimum_chrome_version": "102",
+  "permissions": ["storage", "contextMenus"],
+  "host_permissions": ["<all_urls>"],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_title": "词境设置",
+    "default_popup": "popup/popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "commands": {
+    "lookup-selection": {
+      "suggested_key": {
+        "default": "Alt+W",
+        "mac": "Alt+W"
+      },
+      "description": "用词境理解当前选中的内容"
+    }
+  },
+  "options_ui": {
+    "page": "popup/popup.html",
+    "open_in_tab": true
+  }
+}

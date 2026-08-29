@@ -1,0 +1,26 @@
+# Dependencies
+node_modules/
+package-lock.json
+
+# Rust & Tauri build outputs
+**/target/
+**/gen/
+dist/
+
+# Operating System Files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Archives & Temporary files
+*.zip
+*.tar.gz
+*.log
+/tmp/
+test_*.swift
+test_*.js
+inspect_ax.swift
