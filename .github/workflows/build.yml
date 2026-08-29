@@ -30,8 +30,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: 'npm'
-          cache-dependency-path: wordsense-desktop/package-lock.json
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
@@ -50,7 +48,7 @@ jobs:
           projectPath: wordsense-desktop
           tagName: v__VERSION__
           releaseName: 'WordSense v__VERSION__'
-          releaseBody: '跨平台划词助手 WordSense 发布。支持 macOS (.dmg) 与 Windows (.msi / .exe)'
-          releaseDraft: false
+          releaseBody: 'WordSense 跨平台划词助手发布。支持 macOS (.dmg) 与 Windows (.msi / .exe)'
+          releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}
