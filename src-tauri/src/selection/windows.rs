@@ -1,6 +1,6 @@
 use super::SelectionPayload;
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU64, Ordering};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 
 // ── Global state for the low-level mouse hook callback ──────────────────────
 
@@ -329,6 +329,22 @@ fn unix_ms() -> u64 {
         .unwrap_or(0)
 }
 
+/// 判断屏幕物理坐标是否落在词境自身 panel 窗口矩形内。
+/// 用于忽略面板内部的点击/拖动（如拖动标题栏移动面板），
+/// 避免误触发取词、误清按钮。
+fn is_click_in_app_window(app: &AppHandle, mx: f64, my: f64) -> bool {
+    if let Some(panel) = app.get_webview_window("panel") {
+        if let (Ok(pos), Ok(size)) = (panel.outer_position(), panel.outer_size()) {
+            let x = pos.x as f64;
+            let y = pos.y as f64;
+            let w = size.width as f64;
+            let h = size.height as f64;
+            return mx >= x && mx <= x + w && my >= y && my <= y + h;
+        }
+    }
+    false
+}
+
 // ── Monitor loop ────────────────────────────────────────────────────────────
 
 pub fn start_monitor(app_handle: AppHandle) {
@@ -360,10 +376,15 @@ pub fn start_monitor(app_handle: AppHandle) {
                 continue;
             }
 
+            // ── 词境窗口内部（面板内点击/拖动标题栏）→ 完全忽略 ──
+            if is_click_in_app_window(&app_handle, mx, my) {
+                continue;
+            }
+
             // ── 手势判定：只有拖选 / 双击才可能产生新选区 ──
-            // 普通单击完全不介入：不取词、不隐藏按钮、不模拟按键。
-            // 否则用户点击其它应用 UI（如浏览器扩展弹窗）会被误清按钮、
-            // 误注入 Ctrl+C，甚至破坏用户正在进行的复制。
+            // 普通单击不取词、不模拟按键，但立即清除悬浮按钮/面板：
+            // 用户点击了别处 = 注意力已转移，交互应当即时响应。
+            // （上一版单击完全跳过，导致按钮要等 6 秒超时才消失。）
             let now_ms = unix_ms();
             let last_up_ms = LAST_UP_MS.swap(now_ms, Ordering::SeqCst);
             let last_up_x = LAST_UP_X.swap(up_x, Ordering::SeqCst);
@@ -381,6 +402,7 @@ pub fn start_monitor(app_handle: AppHandle) {
                 && (up_x - last_up_x).abs() <= MOVE_THRESHOLD
                 && (up_y - last_up_y).abs() <= MOVE_THRESHOLD;
             if !dragged && !double_clicked {
+                let _ = app_handle.emit("selection-cleared", ()); // 立即收起按钮/面板
                 continue; // 普通单击：不产生新选区
             }
 

@@ -205,6 +205,10 @@ fn setup_panel_window(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>
             ex_style | WS_EX_NOACTIVATE.0 as i32 | WS_EX_TOOLWINDOW.0 as i32,
         );
     }
+    // 去掉 DWM 系统阴影：无边框透明窗口的 DWM 阴影会在按钮/面板周围
+    // 渲染一圈半透明灰白"底框"（macOS 侧对应 setHasShadow_(NO)），
+    // 视觉层次全部交给 CSS box-shadow。
+    let _ = panel.set_shadow(false);
     Ok(())
 }
 

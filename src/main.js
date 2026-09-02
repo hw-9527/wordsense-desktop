@@ -117,11 +117,12 @@ listen('selection-detected', async (event) => {
   await showButton();
 });
 
-// 监听选区清空/空白点击事件：立即隐藏浮动按钮
+// 监听选区清空/空白点击事件：立即隐藏浮动按钮或收起面板。
+// （Rust 端已排除：普通单击不取词不注入；点击词境窗口内部不发本事件。
+//   因此这里收到的 cleared 一定来自"用户点击了词境以外"或"拖选落空"，
+//   无条件收起是符合直觉的即时反馈。）
 listen('selection-cleared', () => {
-  if (currentMode === 'button') {
-    hideAll();
-  }
+  hideAll();
 });
 
 // 监听 Rust 层检测到的按钮区域点击（绕过 macOS NSNonactivatingPanel 第一次点击被吞的问题）
