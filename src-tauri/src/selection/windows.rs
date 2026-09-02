@@ -1,5 +1,5 @@
 use super::SelectionPayload;
-use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU64, Ordering};
 use tauri::{AppHandle, Emitter};
 
 // ── Global state for the low-level mouse hook callback ──────────────────────
@@ -7,6 +7,11 @@ use tauri::{AppHandle, Emitter};
 static MOUSE_UP_DETECTED: AtomicBool = AtomicBool::new(false);
 static MOUSE_X: AtomicI32 = AtomicI32::new(0);
 static MOUSE_Y: AtomicI32 = AtomicI32::new(0);
+static MOUSE_DOWN_X: AtomicI32 = AtomicI32::new(0);
+static MOUSE_DOWN_Y: AtomicI32 = AtomicI32::new(0);
+static LAST_UP_MS: AtomicU64 = AtomicU64::new(0);
+static LAST_UP_X: AtomicI32 = AtomicI32::new(0);
+static LAST_UP_Y: AtomicI32 = AtomicI32::new(0);
 
 // ── Mouse hook (runs in a dedicated thread with its own message loop) ───────
 
@@ -29,11 +34,16 @@ mod hook {
         wparam: WPARAM,
         lparam: LPARAM,
     ) -> LRESULT {
-        if code >= 0 && wparam.0 == WM_LBUTTONUP as usize {
+        if code >= 0 {
             let data = &*(lparam.0 as *const MsllHookStruct);
-            MOUSE_X.store(data.pt_x, Ordering::SeqCst);
-            MOUSE_Y.store(data.pt_y, Ordering::SeqCst);
-            MOUSE_UP_DETECTED.store(true, Ordering::SeqCst);
+            if wparam.0 == WM_LBUTTONDOWN as usize {
+                MOUSE_DOWN_X.store(data.pt_x, Ordering::SeqCst);
+                MOUSE_DOWN_Y.store(data.pt_y, Ordering::SeqCst);
+            } else if wparam.0 == WM_LBUTTONUP as usize {
+                MOUSE_X.store(data.pt_x, Ordering::SeqCst);
+                MOUSE_Y.store(data.pt_y, Ordering::SeqCst);
+                MOUSE_UP_DETECTED.store(true, Ordering::SeqCst);
+            }
         }
         CallNextHookEx(None, code, wparam, lparam)
     }
@@ -311,9 +321,19 @@ fn truncate_chars(s: &str, max_chars: usize) -> String {
     }
 }
 
+/// 当前 Unix 毫秒时间戳（用于双击间隔判定）
+fn unix_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
 // ── Monitor loop ────────────────────────────────────────────────────────────
 
 pub fn start_monitor(app_handle: AppHandle) {
+    use windows::Win32::UI::Input::KeyboardAndMouse::GetDoubleClickTime;
+
     // Spin up the hook message-loop on its own thread
     std::thread::spawn(|| {
         #[cfg(target_os = "windows")]
@@ -328,16 +348,10 @@ pub fn start_monitor(app_handle: AppHandle) {
         std::thread::sleep(std::time::Duration::from_millis(50));
 
         if MOUSE_UP_DETECTED.swap(false, Ordering::SeqCst) {
-            // Debounce
-            if last_emitted.elapsed() < std::time::Duration::from_millis(400) {
-                continue;
-            }
-
-            // Let the OS finish updating the selection
-            std::thread::sleep(std::time::Duration::from_millis(200));
-
-            let mx = MOUSE_X.load(Ordering::SeqCst) as f64;
-            let my = MOUSE_Y.load(Ordering::SeqCst) as f64;
+            let up_x = MOUSE_X.load(Ordering::SeqCst);
+            let up_y = MOUSE_Y.load(Ordering::SeqCst);
+            let mx = up_x as f64;
+            let my = up_y as f64;
 
             // ── 优先检测：点击是否落在浮动按钮区域 ──
             if super::is_click_on_button(mx, my) {
@@ -345,6 +359,38 @@ pub fn start_monitor(app_handle: AppHandle) {
                 let _ = app_handle.emit("trigger-lookup", ());
                 continue;
             }
+
+            // ── 手势判定：只有拖选 / 双击才可能产生新选区 ──
+            // 普通单击完全不介入：不取词、不隐藏按钮、不模拟按键。
+            // 否则用户点击其它应用 UI（如浏览器扩展弹窗）会被误清按钮、
+            // 误注入 Ctrl+C，甚至破坏用户正在进行的复制。
+            let now_ms = unix_ms();
+            let last_up_ms = LAST_UP_MS.swap(now_ms, Ordering::SeqCst);
+            let last_up_x = LAST_UP_X.swap(up_x, Ordering::SeqCst);
+            let last_up_y = LAST_UP_Y.swap(up_y, Ordering::SeqCst);
+            let down_x = MOUSE_DOWN_X.load(Ordering::SeqCst);
+            let down_y = MOUSE_DOWN_Y.load(Ordering::SeqCst);
+
+            const MOVE_THRESHOLD: i32 = 8; // 物理像素
+            let dragged = (up_x - down_x).abs() > MOVE_THRESHOLD
+                || (up_y - down_y).abs() > MOVE_THRESHOLD;
+            let dbl_time_ms = unsafe { GetDoubleClickTime() } as u64;
+            let double_clicked = last_up_ms != 0
+                && now_ms >= last_up_ms
+                && now_ms - last_up_ms < dbl_time_ms
+                && (up_x - last_up_x).abs() <= MOVE_THRESHOLD
+                && (up_y - last_up_y).abs() <= MOVE_THRESHOLD;
+            if !dragged && !double_clicked {
+                continue; // 普通单击：不产生新选区
+            }
+
+            // Debounce
+            if last_emitted.elapsed() < std::time::Duration::from_millis(400) {
+                continue;
+            }
+
+            // Let the OS finish updating the selection
+            std::thread::sleep(std::time::Duration::from_millis(200));
 
             // 取词可能被挂起/慢响应的应用长时间阻塞（UIA 调用本身无超时），
             // 放到独立线程执行，monitor 用 recv_timeout 兜底，避免检测链路卡死。
