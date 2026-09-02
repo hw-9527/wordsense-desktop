@@ -1,0 +1,13 @@
+node_modules/
+dist/
+src-tauri/target/
+.DS_Store
+
+# 本地 agent 会话配置，与项目无关
+.reasonix/
+reasonix.toml
+
+# 本地 scratch 实验，不进版本库
+test_*.js
+test_*.swift
+inspect_ax.swift
