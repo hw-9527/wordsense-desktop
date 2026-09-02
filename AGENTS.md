@@ -1,6 +1,6 @@
 # 词境 WordSense (wordsense-desktop)
 
-System-wide text-selection → AI dictionary popup (PopClip-like), built with Tauri v2 + vanilla JS for macOS & Windows.
+System-wide text-selection → AI dictionary popup (PopClip-like), built with Tauri v2 + vanilla JS. **当前只针对 Windows 开发与修 bug**（macOS 代码保留但不维护）。
 
 ## Project
 
@@ -32,6 +32,7 @@ System-wide text-selection → AI dictionary popup (PopClip-like), built with Ta
 
 ## Conventions
 
+- **只修 Windows**：bug 修复与新功能只考虑 Windows 行为；macOS 专属代码（`src-tauri/src/selection/macos.rs`、`#[cfg(target_os = "macos")]` 分支、`Entitlements.plist`）保持原样不改动，也不为其做行为验证。涉及双平台对称逻辑（如 macos.rs 与 windows.rs 的镜像函数）时只改 Windows 侧。
 - UI text, comments, and the AI prompt/output are Simplified Chinese. The LLM must return the strict JSON schema defined in `buildPrompt` (`src/lib/core.js`); `parseLlmJson` tolerates fences/BOM/trailing commas.
 - Frontend: vanilla JS, 2-space indent, single quotes — match existing style (no linter).
 - Rust: commands return `Result<T, String>` via `.map_err(|e| e.to_string())`; diagnostics via `log::info!`/`warn!`; platform code strictly behind `#[cfg(target_os = ...)]`.
