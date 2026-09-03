@@ -1,6 +1,9 @@
 use super::SelectionPayload;
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU64, Ordering};
+use std::sync::{OnceLock, mpsc};
 use tauri::{AppHandle, Emitter, Manager};
+use windows::Win32::System::Com::{CLSCTX_INPROC_SERVER, CoCreateInstance};
+use windows::Win32::UI::Accessibility::{CUIAutomation, IUIAutomation};
 
 // ── Global state for the low-level mouse hook callback ──────────────────────
 
@@ -81,84 +84,143 @@ mod hook {
 
 // ── UI Automation: read selected text from the focused element ──────────────
 
+/// IUIAutomation 实例缓存：MTA 下跨线程共享接口指针是合法的，
+/// 省去每次取词的 CoCreateInstance 冷启动（首次查询提速明显）。
+struct UiaClient(IUIAutomation);
+unsafe impl Send for UiaClient {}
+unsafe impl Sync for UiaClient {}
+static UIA_CACHE: OnceLock<Option<UiaClient>> = OnceLock::new();
+
+fn uia_instance() -> Option<&'static IUIAutomation> {
+    UIA_CACHE
+        .get_or_init(|| {
+            unsafe {
+                CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER)
+                    .ok()
+                    .map(UiaClient)
+            }
+        })
+        .as_ref()
+        .map(|c| &c.0)
+}
+
 #[cfg(target_os = "windows")]
-fn get_selected_text_uia() -> Option<(String, String)> {
+fn get_selected_text_uia(
+    scale: f64,
+) -> Option<(String, String, Option<(f64, f64, f64, f64)>)> {
     use windows::Win32::System::Com::*;
     use windows::Win32::UI::Accessibility::*;
 
     unsafe {
-        // COM must be initialised on this thread.
+        // 使用 COM 的线程必须加入 apartment（MTA 幂等、廉价）。
         // UIA 客户端推荐 MTA：monitor 线程没有消息泵，STA 下跨 apartment 调用
         // （如目标应用挂起时）会卡住甚至死锁。
         let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
 
-        let uia: IUIAutomation =
-            CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER).ok()?;
+        let uia = uia_instance()?;
 
         let focused = uia.GetFocusedElement().ok()?;
 
         // Try TextPattern first (richest source of selection info)
-        let pattern = focused
+        let text_pattern = focused
             .GetCurrentPatternAs::<IUIAutomationTextPattern>(UIA_TextPatternId)
-            .ok();
+            .ok()?;
 
-        if let Some(text_pattern) = pattern {
-            let ranges = text_pattern.GetSelection().ok()?;
-            let count = ranges.Length().ok()?;
-            if count > 0 {
-                let range = ranges.GetElement(0).ok()?;
-                let bstr = range.GetText(500).ok()?;
-                let text = bstr.to_string();
-                if text.trim().is_empty() {
-                    return None;
-                }
+        let ranges = text_pattern.GetSelection().ok()?;
+        let count = ranges.Length().ok()?;
+        if count == 0 {
+            return None;
+        }
+        let range = ranges.GetElement(0).ok()?;
+        let bstr = range.GetText(500).ok()?;
+        let text = bstr.to_string();
+        if text.trim().is_empty() {
+            return None;
+        }
 
-                // Context: clone the selection range, expand it to the
-                // enclosing paragraph, then extract a sentence-level window
-                // around the selection (mirrors the macOS implementation).
-                let mut context = String::new();
+        // 选区的屏幕包围盒（逻辑坐标），供前端精确锚定按钮/面板
+        let bounds = selection_bounds(&range, scale);
 
-                if let Ok(para) = range.Clone() {
-                    if para.ExpandToEnclosingUnit(TextUnit_Paragraph).is_ok() {
-                        if let Ok(para_bstr) = para.GetText(1200) {
-                            let para_text = para_bstr.to_string();
-                            if !para_text.trim().is_empty() {
-                                context = extract_context_around(&para_text, &text);
-                            }
-                        }
+        // Context: clone the selection range, expand it to the
+        // enclosing paragraph, then extract a sentence-level window
+        // around the selection (mirrors the macOS implementation).
+        let mut context = String::new();
+
+        if let Ok(para) = range.Clone() {
+            if para.ExpandToEnclosingUnit(TextUnit_Paragraph).is_ok() {
+                if let Ok(para_bstr) = para.GetText(1200) {
+                    let para_text = para_bstr.to_string();
+                    if !para_text.trim().is_empty() {
+                        context = extract_context_around(&para_text, &text);
                     }
                 }
-
-                // Fallback: widen the selection itself by ±150 characters
-                if context.trim().is_empty() {
-                    if let Ok(ext) = range.Clone() {
-                        let _ = ext.MoveEndpointByUnit(
-                            TextPatternRangeEndpoint_Start,
-                            TextUnit_Character,
-                            -150,
-                        );
-                        let _ = ext.MoveEndpointByUnit(
-                            TextPatternRangeEndpoint_End,
-                            TextUnit_Character,
-                            150,
-                        );
-                        if let Ok(ext_bstr) = ext.GetText(600) {
-                            let s = ext_bstr.to_string();
-                            if !s.trim().is_empty() {
-                                context = truncate_chars(s.trim(), 400);
-                            }
-                        }
-                    }
-                }
-
-                return Some((text, context));
             }
         }
 
-        // UIA 拿不到选区（自绘 UI 的应用没有 TextPattern）：返回 None。
-        // 注意：不使用模拟 Ctrl+C 的剪贴板兜底——注入按键会干扰用户的
-        // 正常复制操作与其它应用的 UI，体验劣大于利（用户明确要求移除）。
-        None
+        // Fallback: widen the selection itself by ±150 characters
+        if context.trim().is_empty() {
+            if let Ok(ext) = range.Clone() {
+                let _ = ext.MoveEndpointByUnit(
+                    TextPatternRangeEndpoint_Start,
+                    TextUnit_Character,
+                    -150,
+                );
+                let _ = ext.MoveEndpointByUnit(
+                    TextPatternRangeEndpoint_End,
+                    TextUnit_Character,
+                    150,
+                );
+                if let Ok(ext_bstr) = ext.GetText(600) {
+                    let s = ext_bstr.to_string();
+                    if !s.trim().is_empty() {
+                        context = truncate_chars(s.trim(), 400);
+                    }
+                }
+            }
+        }
+
+        return Some((text, context, bounds));
+    }
+}
+
+/// 选区的屏幕包围盒。UIA 返回物理像素（VT_R8 数组：[left, top, w, h] × N，
+/// 跨行选区会有多个矩形），这里合并为包围盒并换算为逻辑坐标，
+/// 与前端 showButton/showPanel 的定位逻辑保持同一坐标系。
+fn selection_bounds(
+    range: &windows::Win32::UI::Accessibility::IUIAutomationTextRange,
+    scale: f64,
+) -> Option<(f64, f64, f64, f64)> {
+    use windows::Win32::System::Ole::SafeArrayDestroy;
+
+    if scale <= 0.0 {
+        return None;
+    }
+    unsafe {
+        let arr = range.GetBoundingRectangles().ok()?;
+        let sa = &*arr;
+        let n = sa.rgsabound[0].cElements as usize;
+        let result = if n > 0 {
+            let data = std::slice::from_raw_parts(sa.pvData as *const f64, n);
+            let mut l = f64::MAX;
+            let mut t = f64::MAX;
+            let mut r = f64::MIN;
+            let mut b = f64::MIN;
+            for rect in data.chunks_exact(4) {
+                l = l.min(rect[0]);
+                t = t.min(rect[1]);
+                r = r.max(rect[0] + rect[2]);
+                b = b.max(rect[1] + rect[3]);
+            }
+            if r > l && b > t {
+                Some((l / scale, t / scale, (r - l) / scale, (b - t) / scale))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        let _ = SafeArrayDestroy(arr);
+        result
     }
 }
 
@@ -262,8 +324,15 @@ pub fn start_monitor(app_handle: AppHandle) {
         .checked_sub(std::time::Duration::from_secs(1))
         .unwrap();
 
+    // 面板所在显示器的缩放比：用于把 hook 的物理坐标换算为逻辑坐标
+    // （前端 showButton/showPanel 的定位逻辑统一工作在逻辑坐标系）。
+    let scale = app_handle
+        .get_webview_window("panel")
+        .and_then(|w| w.scale_factor().ok())
+        .unwrap_or(1.0);
+
     loop {
-        std::thread::sleep(std::time::Duration::from_millis(50));
+        std::thread::sleep(std::time::Duration::from_millis(20));
 
         if MOUSE_UP_DETECTED.swap(false, Ordering::SeqCst) {
             let up_x = MOUSE_X.load(Ordering::SeqCst);
@@ -329,30 +398,42 @@ pub fn start_monitor(app_handle: AppHandle) {
                 continue;
             }
 
-            // Let the OS finish updating the selection
-            std::thread::sleep(std::time::Duration::from_millis(200));
-
             // 取词可能被挂起/慢响应的应用长时间阻塞（UIA 调用本身无超时），
             // 放到独立线程执行，monitor 用 recv_timeout 兜底，避免检测链路卡死。
             // 仅 UIA：无剪贴板兜底（注入按键方案已按用户要求移除）。
-            let (tx, rx) = std::sync::mpsc::channel();
+            // 提速：mouseup 时选区通常已就绪，先立即查询；拿不到再短等
+            // 120ms 重试一次（替代原先固定 200ms sleep，命中时省 ~200ms）。
+            let (tx, rx) = mpsc::channel();
+            let ui_scale = scale;
             std::thread::spawn(move || {
-                let _ = tx.send(get_selected_text_uia());
+                let result = match get_selected_text_uia(ui_scale) {
+                    Some(v) => Some(v),
+                    None => {
+                        std::thread::sleep(std::time::Duration::from_millis(120));
+                        get_selected_text_uia(ui_scale)
+                    }
+                };
+                let _ = tx.send(result);
             });
 
             match rx.recv_timeout(std::time::Duration::from_millis(1200)) {
-                Ok(Some((text, context))) => {
+                Ok(Some((text, context, bounds))) => {
                     let trimmed = text.trim();
                     if !trimmed.is_empty() && trimmed.len() <= 400 && trimmed.chars().any(|c| c.is_alphanumeric()) {
+                        let (bounds_x, bounds_y, bounds_w, bounds_h) = match bounds {
+                            Some((x, y, w, h)) => (Some(x), Some(y), Some(w), Some(h)),
+                            None => (None, None, None, None),
+                        };
                         let payload = SelectionPayload {
                             text: trimmed.to_string(),
                             context,
-                            mouse_x: mx,
-                            mouse_y: my,
-                            bounds_x: None,
-                            bounds_y: None,
-                            bounds_w: None,
-                            bounds_h: None,
+                            // 前端定位逻辑工作在逻辑坐标系，这里换算
+                            mouse_x: mx / scale,
+                            mouse_y: my / scale,
+                            bounds_x,
+                            bounds_y,
+                            bounds_w,
+                            bounds_h,
                         };
                         log::info!("Selection detected: {:?}", payload.text);
                         let _ = app_handle.emit("selection-detected", &payload);

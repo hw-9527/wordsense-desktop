@@ -16,16 +16,17 @@ async fn show_panel_at(app: tauri::AppHandle, x: f64, y: f64) -> Result<(), Stri
         panel.set_position(pos).map_err(|e| e.to_string())?;
         panel.show().map_err(|e| e.to_string())?;
 
-        // 统一使用逻辑像素（点）记录按钮位置，供 Rust 层判断点击命中
-        let scale = panel.scale_factor().unwrap_or(2.0);
+        // 统一使用物理像素记录按钮命中区域：mousedown 时的命中判定
+        // （is_click_on_button）使用 hook 的物理坐标，两者必须同坐标系。
+        // 仅在小窗口（按钮模式，≤160px逻辑宽度）时记录命中区域；
+        // 面板模式（380px宽）时清除，避免大面积误命中。
+        let scale = panel.scale_factor().unwrap_or(1.0);
         let size = panel.outer_size().unwrap_or(tauri::PhysicalSize::new(110, 52));
         let logical_w = size.width as f64 / scale;
         let logical_h = size.height as f64 / scale;
 
-        // 只在小窗口（按钮模式，≤160px逻辑宽度）时记录命中区域
-        // 面板模式（380px宽）时清除，避免大面积误命中
         if logical_w <= 160.0 {
-            selection::set_button_rect(x, y, logical_w, logical_h);
+            selection::set_button_rect(x * scale, y * scale, logical_w * scale, logical_h * scale);
         } else {
             selection::clear_button_rect();
         }
