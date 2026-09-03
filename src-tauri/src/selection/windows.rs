@@ -12,6 +12,9 @@ static MOUSE_DOWN_Y: AtomicI32 = AtomicI32::new(0);
 static LAST_UP_MS: AtomicU64 = AtomicU64::new(0);
 static LAST_UP_X: AtomicI32 = AtomicI32::new(0);
 static LAST_UP_Y: AtomicI32 = AtomicI32::new(0);
+/// 最近一次 trigger-lookup（点击按钮查词）的时间戳。
+/// 面板弹出过渡期内（800ms），同一次点击的收尾不应把刚弹出的面板清掉。
+static LAST_TRIGGER_MS: AtomicU64 = AtomicU64::new(0);
 
 // ── Mouse hook (runs in a dedicated thread with its own message loop) ───────
 
@@ -371,6 +374,7 @@ pub fn start_monitor(app_handle: AppHandle) {
 
             // ── 优先检测：点击是否落在浮动按钮区域 ──
             if super::is_click_on_button(mx, my) {
+                LAST_TRIGGER_MS.store(unix_ms(), Ordering::SeqCst);
                 log::info!("Click on button detected at ({}, {}), triggering lookup", mx, my);
                 let _ = app_handle.emit("trigger-lookup", ());
                 continue;
@@ -402,6 +406,16 @@ pub fn start_monitor(app_handle: AppHandle) {
                 && (up_x - last_up_x).abs() <= MOVE_THRESHOLD
                 && (up_y - last_up_y).abs() <= MOVE_THRESHOLD;
             if !dragged && !double_clicked {
+                // 点击按钮触发的查词：面板从按钮位置移动/缩放到面板位置
+                // 需要数百毫秒（setSize + show_panel_at 清除按钮命中区），
+                // 同一次点击的 mouseup 收尾可能落在这段过渡期里——此时
+                // 按钮命中区已清、面板窗口可能尚未覆盖点击处，会被误判
+                // 成"点击了外部"而把刚弹出的面板立即清掉（闪一下就消失）。
+                // 因此 trigger-lookup 后 800ms 内的单击一律豁免。
+                let trig = LAST_TRIGGER_MS.load(Ordering::SeqCst);
+                if trig != 0 && now_ms >= trig && now_ms - trig < 800 {
+                    continue;
+                }
                 let _ = app_handle.emit("selection-cleared", ()); // 立即收起按钮/面板
                 continue; // 普通单击：不产生新选区
             }
