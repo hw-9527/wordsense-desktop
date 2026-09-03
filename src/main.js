@@ -261,18 +261,26 @@ async function showPanel() {
   }
 }
 
+let lookupBusy = false;
 async function triggerLookup() {
-  if (!currentSelection) return;
-  await showPanel();
-  renderLoading(currentSelection.text);
+  // 防重入：mousedown 与 Rust 补发的 trigger-lookup、以及双击按钮
+  // 可能并发触发多次查词，第二次起直接忽略
+  if (lookupBusy || !currentSelection) return;
+  lookupBusy = true;
+  try {
+    await showPanel();
+    renderLoading(currentSelection.text);
 
-  const result = await lookupWord(currentSelection.text, currentSelection.context);
-  if (result.ok) {
-    renderResult(result.data, currentSelection.text);
-  } else if (result.error === 'no-api-key') {
-    renderNoKey();
-  } else {
-    renderError(result.message, result.raw);
+    const result = await lookupWord(currentSelection.text, currentSelection.context);
+    if (result.ok) {
+      renderResult(result.data, currentSelection.text);
+    } else if (result.error === 'no-api-key') {
+      renderNoKey();
+    } else {
+      renderError(result.message, result.raw);
+    }
+  } finally {
+    lookupBusy = false;
   }
 }
 

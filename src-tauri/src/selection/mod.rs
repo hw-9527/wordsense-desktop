@@ -45,23 +45,18 @@ pub fn clear_button_rect() {
     }
 }
 
-/// 判断鼠标坐标是否落在浮动按钮区域内
+/// 判断鼠标坐标是否落在浮动按钮区域内。
+/// 无日志：会在低级鼠标钩子回调（WM_LBUTTONDOWN）中调用，钩子回调内
+/// 任何 IO/格式化都有超时风险（超时会被系统直接移除钩子）。
 pub fn is_click_on_button(mx: f64, my: f64) -> bool {
     if let Ok(rect) = BUTTON_RECT.lock() {
         if let Some(r) = *rect {
             // 给按钮区域加一点容差（±8px），让点击判定更宽松
             let margin = 8.0;
-            let hit = mx >= r.x - margin
+            return mx >= r.x - margin
                 && mx <= r.x + r.w + margin
                 && my >= r.y - margin
                 && my <= r.y + r.h + margin;
-            log::info!(
-                "[ButtonHitTest] mouse=({:.0}, {:.0}) rect=({:.0}, {:.0}, {:.0}x{:.0}) hit={}",
-                mx, my, r.x, r.y, r.w, r.h, hit
-            );
-            return hit;
-        } else {
-            log::info!("[ButtonHitTest] mouse=({:.0}, {:.0}) NO BUTTON RECT STORED", mx, my);
         }
     }
     false

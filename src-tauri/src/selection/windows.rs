@@ -15,12 +15,17 @@ static LAST_UP_Y: AtomicI32 = AtomicI32::new(0);
 /// 最近一次 trigger-lookup（点击按钮查词）的时间戳。
 /// 面板弹出过渡期内（800ms），同一次点击的收尾不应把刚弹出的面板清掉。
 static LAST_TRIGGER_MS: AtomicU64 = AtomicU64::new(0);
+/// 本次左键按下时是否命中查词按钮。
+/// 按下瞬间窗口仍处于按钮状态（命中区尚未被 showPanel 清除），判定可靠；
+/// 以此把"点击按钮"的整个 down/up 手势与普通点击区分开。
+static DOWN_ON_BUTTON: AtomicBool = AtomicBool::new(false);
 
 // ── Mouse hook (runs in a dedicated thread with its own message loop) ───────
 
 #[cfg(target_os = "windows")]
 mod hook {
     use super::*;
+    use super::super::is_click_on_button;
     use windows::Win32::Foundation::*;
     use windows::Win32::UI::WindowsAndMessaging::*;
 
@@ -42,6 +47,12 @@ mod hook {
             if wparam.0 == WM_LBUTTONDOWN as usize {
                 MOUSE_DOWN_X.store(data.pt_x, Ordering::SeqCst);
                 MOUSE_DOWN_Y.store(data.pt_y, Ordering::SeqCst);
+                // 按下瞬间判定按钮命中（此刻窗口仍是按钮尺寸/位置，
+                // 命中区未被 showPanel 的弹出流程清除，判定可靠）
+                DOWN_ON_BUTTON.store(
+                    is_click_on_button(data.pt_x as f64, data.pt_y as f64),
+                    Ordering::SeqCst,
+                );
             } else if wparam.0 == WM_LBUTTONUP as usize {
                 MOUSE_X.store(data.pt_x, Ordering::SeqCst);
                 MOUSE_Y.store(data.pt_y, Ordering::SeqCst);
@@ -144,123 +155,11 @@ fn get_selected_text_uia() -> Option<(String, String)> {
             }
         }
 
-        // UIA 拿不到选区（自绘 UI 的应用没有 TextPattern）：返回 None，
-        // 由调用方的剪贴板兜底（clipboard_fallback_text）接管。
+        // UIA 拿不到选区（自绘 UI 的应用没有 TextPattern）：返回 None。
+        // 注意：不使用模拟 Ctrl+C 的剪贴板兜底——注入按键会干扰用户的
+        // 正常复制操作与其它应用的 UI，体验劣大于利（用户明确要求移除）。
         None
     }
-}
-
-// ── Clipboard fallback: for self-drawn-UI apps without UIA TextPattern ─────
-
-/// 模拟一次 Ctrl+C，把前台应用的当前选区复制进剪贴板。
-unsafe fn send_ctrl_c() -> bool {
-    use windows::Win32::UI::Input::KeyboardAndMouse::{
-        SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS,
-        KEYEVENTF_KEYUP, VIRTUAL_KEY, VK_CONTROL,
-    };
-
-    let key = |vk: VIRTUAL_KEY, up: bool| INPUT {
-        r#type: INPUT_KEYBOARD,
-        Anonymous: INPUT_0 {
-            ki: KEYBDINPUT {
-                wVk: vk,
-                wScan: 0,
-                dwFlags: if up { KEYEVENTF_KEYUP } else { KEYBD_EVENT_FLAGS(0) },
-                time: 0,
-                dwExtraInfo: 0,
-            },
-        },
-    };
-
-    let inputs = [
-        key(VK_CONTROL, false),
-        key(VIRTUAL_KEY(b'C' as u16), false),
-        key(VIRTUAL_KEY(b'C' as u16), true),
-        key(VK_CONTROL, true),
-    ];
-    let sent = SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
-    sent == inputs.len() as u32
-}
-
-/// 终端类窗口黑名单：Ctrl+C 在终端里是 SIGINT，绝不能模拟。
-unsafe fn is_terminal_window() -> bool {
-    use windows::Win32::UI::WindowsAndMessaging::{GetClassNameW, GetForegroundWindow};
-
-    const BLACKLIST: [&str; 4] = [
-        "ConsoleWindowClass",            // conhost（cmd / 旧版控制台）
-        "CASCADIA_HOSTING_WINDOW_CLASS", // Windows Terminal
-        "mintty",                        // Git Bash / Cygwin
-        "PuTTY",                         // PuTTY
-    ];
-
-    let hwnd = GetForegroundWindow();
-    if hwnd.0.is_null() {
-        return false;
-    }
-    let mut buf = [0u16; 64];
-    let n = GetClassNameW(hwnd, &mut buf);
-    if n <= 0 {
-        return false;
-    }
-    let class = String::from_utf16_lossy(&buf[..n as usize]);
-    BLACKLIST.iter().any(|c| class.eq_ignore_ascii_case(c))
-}
-
-/// 剪贴板兜底：备份现有剪贴板 → Ctrl+C → 读回 → 恢复 → 比对。
-/// 仅当读到的文本与备份不同（确实是刚复制出来的新内容）时才视为选中文本。
-fn clipboard_fallback_text() -> Option<String> {
-    let mut cb = arboard::Clipboard::new().ok()?;
-    // 备份现有剪贴板文本；None = 原内容不是文本（图片/文件等），arboard 无法
-    // 做任意格式的字节级恢复，此时 Ctrl+C 的结果会留在剪贴板（已知取舍）。
-    let backup = cb.get_text().ok();
-
-    unsafe {
-        if !send_ctrl_c() {
-            log::warn!("[ClipboardFallback] SendInput failed");
-            return None;
-        }
-    }
-    // 给目标应用一点时间响应 Ctrl+C 并写入剪贴板
-    std::thread::sleep(std::time::Duration::from_millis(150));
-
-    let text = match cb.get_text() {
-        Ok(t) => t,
-        Err(_) => {
-            log::info!("[ClipboardFallback] no text after Ctrl+C");
-            return None;
-        }
-    };
-
-    // 恢复原剪贴板（仅当原内容是文本）
-    if let Some(prev) = &backup {
-        let _ = cb.set_text(prev.as_str());
-    }
-
-    let text = text.trim().to_string();
-    if text.is_empty() || backup.as_deref() == Some(text.as_str()) {
-        // 没有新内容：应用不支持复制选区，或根本没有选区
-        log::info!("[ClipboardFallback] clipboard unchanged, giving up");
-        return None;
-    }
-    log::info!("[ClipboardFallback] got text: {:?}", truncate_chars(&text, 40));
-    Some(text)
-}
-
-/// 完整取词：先 UIA（TextPattern，覆盖浏览器/Office/WPF），失败则剪贴板兜底
-/// （覆盖 PDF 阅读器、聊天软件等自绘 UI）。剪贴板路径没有 UIA 上下文，返回空串。
-fn detect_selection() -> Option<(String, String)> {
-    if let Some((text, context)) = get_selected_text_uia() {
-        return Some((text, context));
-    }
-
-    unsafe {
-        if is_terminal_window() {
-            log::info!("[ClipboardFallback] skipped: terminal window");
-            return None;
-        }
-    }
-
-    clipboard_fallback_text().map(|text| (text, String::new()))
 }
 
 /// 在 full_text 中定位 target，向前/向后寻找句子边界标点，提取句子级上下文。
@@ -372,10 +271,15 @@ pub fn start_monitor(app_handle: AppHandle) {
             let mx = up_x as f64;
             let my = up_y as f64;
 
-            // ── 优先检测：点击是否落在浮动按钮区域 ──
-            if super::is_click_on_button(mx, my) {
+            // ── 本次按下命中了查词按钮 → 整个 down/up 是"查词手势" ──
+            // 前端 mousedown 已触发查词并弹出面板（窗口可能正处于
+            // 移动/缩放的中间态：按钮命中区已被清、面板可能尚未覆盖
+            // 点击处）。此时无论窗口什么状态都不得再判定：不取词、
+            // 不清除、不注入——否则刚弹出的面板会被这次收尾清掉。
+            // （trigger-lookup 对 Windows 是兜底：正常由前端 mousedown
+            //   直接触发；此处补发以兼容 mousedown 未到达的异常情形。）
+            if DOWN_ON_BUTTON.swap(false, Ordering::SeqCst) {
                 LAST_TRIGGER_MS.store(unix_ms(), Ordering::SeqCst);
-                log::info!("Click on button detected at ({}, {}), triggering lookup", mx, my);
                 let _ = app_handle.emit("trigger-lookup", ());
                 continue;
             }
@@ -430,9 +334,10 @@ pub fn start_monitor(app_handle: AppHandle) {
 
             // 取词可能被挂起/慢响应的应用长时间阻塞（UIA 调用本身无超时），
             // 放到独立线程执行，monitor 用 recv_timeout 兜底，避免检测链路卡死。
+            // 仅 UIA：无剪贴板兜底（注入按键方案已按用户要求移除）。
             let (tx, rx) = std::sync::mpsc::channel();
             std::thread::spawn(move || {
-                let _ = tx.send(detect_selection());
+                let _ = tx.send(get_selected_text_uia());
             });
 
             match rx.recv_timeout(std::time::Duration::from_millis(1200)) {
