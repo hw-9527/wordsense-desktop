@@ -74,11 +74,15 @@ async fn open_settings(app: tauri::AppHandle) -> Result<(), String> {
 
 /// 复制式取词：用户点击"复制模式"查词按钮后调用。
 /// 仅此场景模拟 Ctrl+C（用户主动触发），备份并恢复剪贴板原内容。
+/// 必须在阻塞线程池执行（sync 命令会占用主线程冻结 STA 消息泵，
+/// 导致目标应用写剪贴板被卡、读到旧内容）。
 #[tauri::command]
-fn copy_selection_text() -> Result<String, String> {
+async fn copy_selection_text() -> Result<String, String> {
     #[cfg(target_os = "windows")]
     {
-        selection::copy_text_via_clipboard()
+        tauri::async_runtime::spawn_blocking(selection::copy_text_via_clipboard)
+            .await
+            .map_err(|e| format!("复制任务执行失败: {e}"))?
     }
     #[cfg(not(target_os = "windows"))]
     {

@@ -284,37 +284,69 @@ unsafe fn is_terminal_window() -> bool {
 }
 
 /// 用户点击查词按钮后的主动复制取词：
-/// 备份剪贴板 → Ctrl+C → 读回 → 恢复备份 → 返回选中文本。
-/// 前台窗口仍是原应用（词境面板不抢焦点），选区保持不变，Ctrl+C 有效。
+/// 等待左键释放 → 备份剪贴板 → Ctrl+C → 读回并与备份比对（不同才算
+/// 复制生效，最多重试 3 次）→ 恢复备份 → 返回选中文本。
+/// 注意：必须在阻塞线程池中执行（调用方用 spawn_blocking）——
+/// 不能在 Tauri 主线程跑，否则 sleep 会冻结 STA 消息泵，
+/// 目标应用写剪贴板（延迟渲染）会被卡住导致读到旧内容。
 pub fn copy_text_via_clipboard() -> Result<String, String> {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON};
     unsafe {
         if is_terminal_window() {
             return Err("终端窗口不支持复制取词".to_string());
         }
+        // 前端 mousedown 即触发本调用，此刻用户的物理左键可能仍按着：
+        // 目标应用处于左键拖动模态时会忽略 Ctrl+C。等它松开再注入
+        // （上限 ~600ms 防死等）。
+        let start = std::time::Instant::now();
+        while GetAsyncKeyState(VK_LBUTTON.0 as i32) < 0 {
+            if start.elapsed() > std::time::Duration::from_millis(600) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
     }
+
     let mut cb = arboard::Clipboard::new().map_err(|e| e.to_string())?;
     // 备份现有剪贴板文本；None = 原内容不是文本（图片等），
     // arboard 无法做任意格式恢复，此时复制结果会留在剪贴板（已知取舍）。
     let backup = cb.get_text().ok();
+    let backup_trimmed = backup.as_ref().map(|s| s.trim().to_string());
 
-    unsafe {
-        if !send_ctrl_c() {
-            return Err("无法模拟复制操作".to_string());
+    // 最多尝试 3 次 Ctrl+C：读回内容必须与备份不同（trim 后）才算复制
+    // 生效——读到备份 = 复制未生效（应用未响应/时序），重试。
+    for _ in 0..3 {
+        unsafe {
+            if !send_ctrl_c() {
+                return Err("无法模拟复制操作".to_string());
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(150));
+
+        let read = cb.get_text().ok().map(|t| t.trim().to_string());
+        if let Some(t) = read {
+            if !t.is_empty() {
+                let differs = match &backup_trimmed {
+                    Some(b) => &t != b,
+                    None => true,
+                };
+                if differs {
+                    // 恢复原剪贴板（仅当原内容是文本），把这次取词对
+                    // 用户剪贴板的影响降为零
+                    if let Some(prev) = &backup {
+                        let _ = cb.set_text(prev.as_str());
+                    }
+                    return Ok(t);
+                }
+            }
         }
     }
-    std::thread::sleep(std::time::Duration::from_millis(180));
 
-    let text = cb.get_text().ok();
-
-    // 恢复原剪贴板（仅当原内容是文本），把这次取词对用户剪贴板的影响降为零
+    // 全部尝试失败：恢复备份后明确报错，绝不拿旧剪贴板内容当查询词
     if let Some(prev) = &backup {
         let _ = cb.set_text(prev.as_str());
     }
-
-    match text {
-        Some(t) if !t.trim().is_empty() => Ok(t.trim().to_string()),
-        _ => Err("未能复制到选中的文本（该应用可能不支持复制）".to_string()),
-    }
+    Err("未能复制到选中的文本（该应用可能不支持复制）".to_string())
 }
 
 /// 按下点（物理坐标）是否落在前台窗口的客户区内。
