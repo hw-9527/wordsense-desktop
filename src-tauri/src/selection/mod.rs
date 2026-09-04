@@ -17,6 +17,9 @@ pub struct SelectionPayload {
     pub bounds_y: Option<f64>,
     pub bounds_w: Option<f64>,
     pub bounds_h: Option<f64>,
+    /// true = UIA 取词失败（自绘 UI 应用），按钮仅为占位：
+    /// 用户点击按钮时才通过模拟 Ctrl+C 复制取词（用户主动触发）。
+    pub needs_copy: bool,
 }
 
 /// 浮动按钮的屏幕矩形区域（物理像素坐标）
@@ -60,6 +63,13 @@ pub fn is_click_on_button(mx: f64, my: f64) -> bool {
         }
     }
     false
+}
+
+/// 用户点击查词按钮后的主动复制取词（Windows）。
+/// 仅在用户点击按钮时被调用——选中文本而不点按钮时绝不注入按键。
+#[cfg(target_os = "windows")]
+pub fn copy_text_via_clipboard() -> Result<String, String> {
+    windows::copy_text_via_clipboard()
 }
 
 pub fn start_monitor(app_handle: AppHandle) {

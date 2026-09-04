@@ -224,6 +224,124 @@ fn selection_bounds(
     }
 }
 
+// ── Copy-based lookup (user-initiated only) ─────────────────────────────────
+//
+// 约束：模拟 Ctrl+C 只允许发生在"用户点击查词按钮"之后（用户主动触发）。
+// 选中文本而不点按钮时绝不注入按键；monitor 的自动取词路径不含任何注入。
+
+/// 模拟一次 Ctrl+C，把前台应用的当前选区复制进剪贴板。
+unsafe fn send_ctrl_c() -> bool {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS,
+        KEYEVENTF_KEYUP, VIRTUAL_KEY, VK_CONTROL,
+    };
+
+    let key = |vk: VIRTUAL_KEY, up: bool| INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk: vk,
+                wScan: 0,
+                dwFlags: if up { KEYEVENTF_KEYUP } else { KEYBD_EVENT_FLAGS(0) },
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    };
+
+    let inputs = [
+        key(VK_CONTROL, false),
+        key(VIRTUAL_KEY(b'C' as u16), false),
+        key(VIRTUAL_KEY(b'C' as u16), true),
+        key(VK_CONTROL, true),
+    ];
+    let sent = SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
+    sent == inputs.len() as u32
+}
+
+/// 终端类窗口黑名单：Ctrl+C 在终端里是 SIGINT，绝不能模拟。
+unsafe fn is_terminal_window() -> bool {
+    use windows::Win32::UI::WindowsAndMessaging::{GetClassNameW, GetForegroundWindow};
+
+    const BLACKLIST: [&str; 4] = [
+        "ConsoleWindowClass",            // conhost（cmd / 旧版控制台）
+        "CASCADIA_HOSTING_WINDOW_CLASS", // Windows Terminal
+        "mintty",                        // Git Bash / Cygwin
+        "PuTTY",                         // PuTTY
+    ];
+
+    let hwnd = GetForegroundWindow();
+    if hwnd.0.is_null() {
+        return false;
+    }
+    let mut buf = [0u16; 64];
+    let n = GetClassNameW(hwnd, &mut buf);
+    if n <= 0 {
+        return false;
+    }
+    let class = String::from_utf16_lossy(&buf[..n as usize]);
+    BLACKLIST.iter().any(|c| class.eq_ignore_ascii_case(c))
+}
+
+/// 用户点击查词按钮后的主动复制取词：
+/// 备份剪贴板 → Ctrl+C → 读回 → 恢复备份 → 返回选中文本。
+/// 前台窗口仍是原应用（词境面板不抢焦点），选区保持不变，Ctrl+C 有效。
+pub fn copy_text_via_clipboard() -> Result<String, String> {
+    unsafe {
+        if is_terminal_window() {
+            return Err("终端窗口不支持复制取词".to_string());
+        }
+    }
+    let mut cb = arboard::Clipboard::new().map_err(|e| e.to_string())?;
+    // 备份现有剪贴板文本；None = 原内容不是文本（图片等），
+    // arboard 无法做任意格式恢复，此时复制结果会留在剪贴板（已知取舍）。
+    let backup = cb.get_text().ok();
+
+    unsafe {
+        if !send_ctrl_c() {
+            return Err("无法模拟复制操作".to_string());
+        }
+    }
+    std::thread::sleep(std::time::Duration::from_millis(180));
+
+    let text = cb.get_text().ok();
+
+    // 恢复原剪贴板（仅当原内容是文本），把这次取词对用户剪贴板的影响降为零
+    if let Some(prev) = &backup {
+        let _ = cb.set_text(prev.as_str());
+    }
+
+    match text {
+        Some(t) if !t.trim().is_empty() => Ok(t.trim().to_string()),
+        _ => Err("未能复制到选中的文本（该应用可能不支持复制）".to_string()),
+    }
+}
+
+/// 按下点（物理坐标）是否落在前台窗口的客户区内。
+/// 用于 UIA 失败时决定是否弹出"复制模式"按钮：标题栏/边框拖动等
+/// 非客户区手势不是文本选择，不弹，避免拖动窗口时误扰。
+/// 判定失败（无前台窗口等）时放行。
+unsafe fn is_down_in_client_area(phys_x: i32, phys_y: i32) -> bool {
+    use windows::Win32::Foundation::POINT;
+    use windows::Win32::Graphics::Gdi::ClientToScreen;
+    use windows::Win32::UI::WindowsAndMessaging::{GetClientRect, GetForegroundWindow};
+
+    let hwnd = GetForegroundWindow();
+    if hwnd.0.is_null() {
+        return true;
+    }
+    let mut rect = windows::Win32::Foundation::RECT::default();
+    if GetClientRect(hwnd, &mut rect).is_err() {
+        return true;
+    }
+    let mut tl = POINT { x: rect.left, y: rect.top };
+    let mut br = POINT { x: rect.right, y: rect.bottom };
+    if !ClientToScreen(hwnd, &mut tl).as_bool() || !ClientToScreen(hwnd, &mut br).as_bool() {
+        return true;
+    }
+    phys_x >= tl.x && phys_x <= br.x && phys_y >= tl.y && phys_y <= br.y
+}
+
 /// 在 full_text 中定位 target，向前/向后寻找句子边界标点，提取句子级上下文。
 /// 与 macOS 版 `extract_sentence_context` 算法保持一致，且全程 UTF-8 安全。
 fn extract_context_around(full_text: &str, target: &str) -> String {
@@ -434,6 +552,7 @@ pub fn start_monitor(app_handle: AppHandle) {
                             bounds_y,
                             bounds_w,
                             bounds_h,
+                            needs_copy: false,
                         };
                         log::info!("Selection detected: {:?}", payload.text);
                         let _ = app_handle.emit("selection-detected", &payload);
@@ -443,7 +562,30 @@ pub fn start_monitor(app_handle: AppHandle) {
                     }
                 }
                 Ok(None) => {
-                    let _ = app_handle.emit("selection-cleared", ());
+                    // UIA 取词失败（自绘 UI 应用，如 PDF/微信）：
+                    // 拖选/双击手势已发生，弹出"复制模式"占位按钮——
+                    // 用户点击按钮时才模拟 Ctrl+C 复制取词（用户主动触发），
+                    // 不点击则什么都不做，按钮随点击外部/超时正常消失。
+                    // 客户区过滤：down 点不在前台窗口客户区（标题栏/边框
+                    // 拖动等非文本选择手势）不弹。
+                    if unsafe { is_down_in_client_area(down_x, down_y) } {
+                        let payload = SelectionPayload {
+                            text: String::new(),
+                            context: String::new(),
+                            mouse_x: mx / scale,
+                            mouse_y: my / scale,
+                            bounds_x: None,
+                            bounds_y: None,
+                            bounds_w: None,
+                            bounds_h: None,
+                            needs_copy: true,
+                        };
+                        log::info!("UIA lookup failed, offering copy-lookup button");
+                        let _ = app_handle.emit("selection-detected", &payload);
+                        last_emitted = std::time::Instant::now();
+                    } else {
+                        let _ = app_handle.emit("selection-cleared", ());
+                    }
                 }
                 Err(_) => {
                     // 取词超时（目标应用挂起或 UIA provider 无响应）：

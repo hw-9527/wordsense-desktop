@@ -72,6 +72,20 @@ async fn open_settings(app: tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// 复制式取词：用户点击"复制模式"查词按钮后调用。
+/// 仅此场景模拟 Ctrl+C（用户主动触发），备份并恢复剪贴板原内容。
+#[tauri::command]
+fn copy_selection_text() -> Result<String, String> {
+    #[cfg(target_os = "windows")]
+    {
+        selection::copy_text_via_clipboard()
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        Err("此平台不支持复制式取词".to_string())
+    }
+}
+
 // ── System tray ─────────────────────────────────────────────────────────────
 
 fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
@@ -236,6 +250,7 @@ pub fn run() {
             show_panel_at,
             hide_panel,
             open_settings,
+            copy_selection_text,
         ])
         .setup(|app| {
             setup_tray(app)?;

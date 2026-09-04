@@ -45,6 +45,6 @@ System-wide text-selection → AI dictionary popup (PopClip-like), built with Ta
 - Root-level `test_*.js`, `test_*.swift`, `inspect_ax.swift` are scratch experiments, not part of the build — leave them alone / keep out of feature diffs.
 - `.gitignore` covers `node_modules/`, `dist/`, `src-tauri/target/`, `.DS_Store`, `.reasonix/`, `reasonix.toml`.
 - Declared but currently unused: global-shortcut (plugin registered in `lib.rs` + permissions granted in capabilities, but no shortcut is registered in JS or Rust). Reuse them before adding equivalents.
-- **划词取词仅走 UIA，禁止按键注入**：模拟 Ctrl+C 的剪贴板兜底方案已按用户要求彻底移除（会干扰用户真实复制与其它应用 UI），不要重新引入。取词不到就收起（selection-cleared）。
+- **划词取词的按键注入政策**（2026-09 定稿）：禁止在取词监测流程中自动模拟按键（mouseup 自动 Ctrl+C 方案已移除，会干扰用户真实复制与其它应用 UI）。唯一允许的复制路径：UIA 取词失败时弹出"复制模式"占位按钮（`SelectionPayload.needs_copy`），**用户点击按钮后**才调用 `copy_selection_text` 命令模拟 Ctrl+C（备份并恢复剪贴板、终端窗口黑名单保护）。悬浮按钮无自动超时，仅点击外部/新划词时消失。
 - PowerShell console may mojibake UTF-8 Chinese in source files — files themselves are fine; prefer file tools over `Get-Content` when encoding matters.
 - 本机编译：msys64 的 mingw64 gcc 工具链完整可用（rustup default 为 windows-gnu），`cargo check` 可通过。但项目路径含中文 `E:\下载\` 会让 mingw ld 报 `cannot find *.rlib`；`subst` 盘符映射无效（rustc/cargo 会把路径 canonicalize 回真实路径）。可行做法：把 `src-tauri`（排除 `target/`）复制到纯 ASCII 路径（如 `%TEMP%\wordsense-check`）再 `cargo check`（约 2 分钟）。更彻底的修复：装 VS Build Tools 后 `rustup default stable-x86_64-pc-windows-msvc`。`src-tauri/target/release` 里的 `.dylib` 是 macOS 产物，不代表本机构建过。

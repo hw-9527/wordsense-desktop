@@ -14,12 +14,10 @@ const pronYoudaoBtn = panelEl.querySelector('.ws-pron-youdao');
 const appWindow = getCurrentWebviewWindow();
 
 let currentSelection = null;
-let buttonTimer = null;
 let currentMode = 'hidden'; // 'button' | 'panel' | 'hidden'
 let youdaoAudio = null;
 
 function hideAll() {
-  clearTimeout(buttonTimer);
   stopSpeak();
   stopYoudao();
   btnWrapEl.hidden = true;
@@ -98,10 +96,11 @@ async function getMonitorBounds() {
 
 // 监听 Rust 后端发送的划词检测事件
 listen('selection-detected', async (event) => {
-  const { text, context, mouse_x, mouse_y, bounds_x, bounds_y, bounds_w, bounds_h } = event.payload;
+  const { text, context, mouse_x, mouse_y, bounds_x, bounds_y, bounds_w, bounds_h, needs_copy } = event.payload;
   const trimmed = String(text || '').trim();
-  // 前端严格校验有效文本，防止空串、纯标点、空白符误弹出
-  if (!trimmed || !/[a-zA-Z0-9\u4e00-\u9fa5]/.test(trimmed)) {
+  // UIA 取词失败时 payload 文本为空 + needs_copy=true：弹"复制模式"按钮，
+  // 用户点击按钮时才复制取词；正常路径仍严格校验文本，防空串/纯标点误弹
+  if (!needs_copy && (!trimmed || !/[a-zA-Z0-9\u4e00-\u9fa5]/.test(trimmed))) {
     return;
   }
   currentSelection = {
@@ -113,6 +112,7 @@ listen('selection-detected', async (event) => {
     bounds_y,
     bounds_w,
     bounds_h,
+    needs_copy: !!needs_copy,
   };
   await showButton();
 });
@@ -133,7 +133,6 @@ listen('trigger-lookup', async () => {
 });
 
 async function showButton() {
-  clearTimeout(buttonTimer);
   currentMode = 'button';
   btnWrapEl.hidden = false;
   panelEl.hidden = true;
@@ -188,17 +187,10 @@ async function showButton() {
   } catch (err) {
     console.error('Failed to show button:', err);
   }
-
-  // 6 秒内没有点击则自动隐藏
-  buttonTimer = setTimeout(() => {
-    if (currentMode === 'button') {
-      hideAll();
-    }
-  }, 6000);
+  // 按钮不设自动超时：点击外部或新划词时消失（用户要求）
 }
 
 async function showPanel() {
-  clearTimeout(buttonTimer);
   currentMode = 'panel';
   btnWrapEl.hidden = true;
   panelEl.hidden = false;
@@ -268,12 +260,35 @@ async function triggerLookup() {
   if (lookupBusy || !currentSelection) return;
   lookupBusy = true;
   try {
-    await showPanel();
-    renderLoading(currentSelection.text);
+    let text = currentSelection.text;
+    const context = currentSelection.context || '';
 
-    const result = await lookupWord(currentSelection.text, currentSelection.context);
+    // 复制模式：UIA 取不到的窗口（如 PDF/微信）里选中文本时按钮先出现，
+    // 用户此刻点击按钮才模拟 Ctrl+C 复制取词（选中文本不点按钮时什么都不做）
+    if (currentSelection.needs_copy) {
+      let copied = '';
+      try {
+        copied = await invoke('copy_selection_text');
+      } catch (err) {
+        await showPanel();
+        renderError(String(err), '');
+        return;
+      }
+      copied = String(copied || '').trim();
+      if (!copied) {
+        await showPanel();
+        renderError('未能获取选中的文本', '');
+        return;
+      }
+      text = copied;
+    }
+
+    await showPanel();
+    renderLoading(text);
+
+    const result = await lookupWord(text, context);
     if (result.ok) {
-      renderResult(result.data, currentSelection.text);
+      renderResult(result.data, text);
     } else if (result.error === 'no-api-key') {
       renderNoKey();
     } else {
