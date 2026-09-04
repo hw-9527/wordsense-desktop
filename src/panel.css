@@ -194,7 +194,8 @@ html, body {
 .ws-note { color: #6b7280; font-size: 12.5px; font-style: italic; margin-top: 10px; }
 
 /* ── Footer ────────────────────────────────────────────────────────────── */
-.ws-foot { display: flex; gap: 8px; padding: 8px 12px 10px; border-top: 1px solid #eef0f4; }
+.ws-foot { display: flex; gap: 8px; padding: 8px 12px 10px; border-top: 1px solid #eef0f4; align-items: center; }
+.ws-version { margin-left: auto; font-size: 10px; color: #9ca3af; user-select: text; }
 .ws-btn-sm {
   border: 1px solid #d1d5db;
   background: #fff;

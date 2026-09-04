@@ -2,8 +2,17 @@ import { listen } from '@tauri-apps/api/event';
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { LogicalSize, PhysicalPosition } from '@tauri-apps/api/dpi';
 import { invoke } from '@tauri-apps/api/core';
+import { getVersion } from '@tauri-apps/api/app';
 import { renderResult, renderError, renderLoading, renderNoKey, getLastData } from './panel.js';
 import { lookupWord } from './lookup.js';
+
+// 面板底部显示应用版本：用于确认安装的构建是否包含最新修复
+getVersion()
+  .then((v) => {
+    const el = document.querySelector('.ws-version');
+    if (el) el.textContent = 'v' + v;
+  })
+  .catch(() => {});
 
 const btnWrapEl = document.getElementById('ws-btn-wrap');
 const btnEl = document.getElementById('ws-btn');
